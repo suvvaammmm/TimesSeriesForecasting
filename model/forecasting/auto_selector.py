@@ -10,25 +10,35 @@ def normalize(value, min_val, max_val):
         return 0
     return (value - min_val) / (max_val - min_val)
 
-
 def select_best_model(series):
 
-    results = {}
+    try:
+        f1, l1, u1, aic1, res1, lb1 = run_arima(series)
+    except:
+        aic1 = float("inf")
 
-    # ARIMA
-    f1, l1, u1, aic1, res1, lb1 = run_arima(series)
-    rmse1, mape1, dir1, _ = rolling_backtest(series, run_arima)
+    try:
+        f2, l2, u2, aic2, res2, lb2 = run_sarima(series)
+    except:
+        aic2 = float("inf")
 
-    results["ARIMA"] = {
-        "forecast": f1,
-        "lower": l1,
-        "upper": u1,
-        "aic": aic1,
-        "residual_mean": res1,
-        "lb_pvalue": lb1,
-        "rmse": rmse1,
-        "mape": mape1,
-        "direction": dir1
+    if aic1 <= aic2:
+        return "ARIMA", {
+            "forecast": f1,
+            "lower": l1,
+            "upper": u1,
+            "aic": aic1,
+            "residual_mean": res1,
+            "lb_pvalue": lb1,
+        }
+
+    return "SARIMA", {
+        "forecast": f2,
+        "lower": l2,
+        "upper": u2,
+        "aic": aic2,
+        "residual_mean": res2,
+        "lb_pvalue": lb2,
     }
 
     # SARIMA

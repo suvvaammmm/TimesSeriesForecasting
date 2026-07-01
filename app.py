@@ -113,7 +113,7 @@ def predict():
             aic = best_data["aic"]
             residual_mean = best_data["residual_mean"]
             lb_pvalue = best_data["lb_pvalue"]
-            selected_model = best_model + " (AUTO)"
+            selected_model = best_model
 
         else:
             return jsonify({"error": "Invalid model type"}), 400
@@ -126,12 +126,10 @@ def predict():
         # ---------------------------
         # Backtest
         # ---------------------------
-        if "ARIMA" in selected_model:
-            bt_rmse, bt_mape, bt_dir, rolling_preds = rolling_backtest(series, run_arima)
-        elif "Ridge" in selected_model:
-            bt_rmse, bt_mape, bt_dir, rolling_preds = rolling_backtest(series, run_ridge)
-        else:
-            bt_rmse, bt_mape, bt_dir, rolling_preds = rolling_backtest(series, run_sarima)
+        bt_rmse = None
+        bt_mape = None
+        bt_dir = None
+        rolling_preds = None
 
         # ---------------------------
         # Strategy Simulation
