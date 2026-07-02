@@ -14,27 +14,20 @@ def backtest(series, model_func, test_size=0.2):
     train = series.iloc[:split]
     test = series.iloc[split:]
 
-    forecast, _, _, _ = model_func(train)
+    try:
+        forecast, _, _, _, _, _ = model_func(train)
+    except:
+        return None, None, None
 
     forecast = forecast[:len(test)]
 
-    # Align forecast with test index
     forecast = pd.Series(forecast, index=test.index)
-
-    # -----------------------
-    # METRICS
-    # -----------------------
 
     rmse = np.sqrt(np.mean((test - forecast) ** 2))
 
-    # Avoid divide by zero
     mape = np.mean(
         np.abs((test - forecast) / test.replace(0, np.nan))
     ) * 100
-
-    # -----------------------
-    # DIRECTION ACCURACY
-    # -----------------------
 
     actual_direction = np.sign(test.diff().dropna())
     forecast_direction = np.sign(forecast.diff().dropna())
@@ -45,9 +38,8 @@ def backtest(series, model_func, test_size=0.2):
 
     return rmse, mape, direction_accuracy
 
-def rolling_backtest(series, model_func, test_size=0.2):
 
-    import numpy as np
+def rolling_backtest(series, model_func, test_size=0.2):
 
     n = len(series)
 
@@ -59,22 +51,27 @@ def rolling_backtest(series, model_func, test_size=0.2):
     predictions = []
     actuals = []
 
-    for i in range(split, min(split + 30, n - 1)):
+    # Reduced from 30 iterations to 5 for Render Free
+    max_iterations = 5
+
+    for i in range(split, min(split + max_iterations, n - 1)):
+
         train = series.iloc[:i]
-        current_price = series.iloc[i]
         next_price = series.iloc[i + 1]
 
         try:
             forecast, _, _, _, _, _ = model_func(train)
-            pred_next = forecast[0]
 
-            predictions.append(pred_next)
-            actuals.append(next_price)
+            if forecast is None or len(forecast) == 0:
+                continue
 
-        except:
+            predictions.append(float(forecast[0]))
+            actuals.append(float(next_price))
+
+        except Exception:
             continue
 
-    if len(predictions) == 0:
+    if len(predictions) < 2:
         return None, None, None, None
 
     predictions = np.array(predictions)
@@ -82,9 +79,12 @@ def rolling_backtest(series, model_func, test_size=0.2):
 
     rmse = np.sqrt(np.mean((actuals - predictions) ** 2))
     mape = np.mean(np.abs((actuals - predictions) / actuals)) * 100
-    direction_accuracy = np.mean(
-        np.sign(np.diff(actuals)) ==
-        np.sign(np.diff(predictions))
-    ) * 100
 
-    return rmse, mape, direction_accuracy, predictions
+    direction_accuracy = (
+        np.mean(
+            np.sign(np.diff(actuals)) ==
+            np.sign(np.diff(predictions))
+        ) * 100
+    )
+
+    return rmse, mape, direction_accuracy, predictions.tolist()
