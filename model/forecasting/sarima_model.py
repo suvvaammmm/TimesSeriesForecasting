@@ -1,72 +1,71 @@
+import numpy as np
+import pandas as pd
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from statsmodels.stats.diagnostic import acorr_ljungbox
-import numpy as np
 
 
-def run_sarima(data, forecast_steps=5):
+def run_sarima(series, forecast_steps: int = 5):
+    # Normalise input — works whether caller passes Series or ndarray
+    series_arr = np.asarray(series, dtype=float)
+    series_arr = series_arr[~np.isnan(series_arr)]   # drop NaNs
 
-    # Default safe values
-    aic = 0.0
+    if len(series_arr) < 20:
+        raise ValueError("SARIMA needs at least 20 data points")
+
+    log_prices  = np.log(series_arr)
+    log_returns = np.diff(log_prices)
+
+    use_seasonal   = len(log_returns) >= 30
+    seasonal_order = (1, 0, 1, 5) if use_seasonal else (0, 0, 0, 0)
+
+    aic           = 0.0
     residual_mean = 0.0
-    lb_pvalue = 0.0
+    lb_pvalue     = 0.5
 
     try:
         model = SARIMAX(
-            data,
-            order=(1, 1, 1),
-            seasonal_order=(1, 0, 1, 5),
+            log_returns,
+            order=(1, 0, 1),
+            seasonal_order=seasonal_order,
             enforce_stationarity=False,
-            enforce_invertibility=False
+            enforce_invertibility=False,
         )
+        result = model.fit(disp=False, maxiter=200)
 
-        result = model.fit(disp=False)
+        aic         = float(result.aic)
+        fc_obj      = result.get_forecast(steps=forecast_steps)
+        ret_forecast = fc_obj.predicted_mean.values
+        ret_ci       = fc_obj.conf_int().values
 
-        # AIC
-        aic = result.aic
+        last_log         = log_prices[-1]
+        cum_ret_forecast = np.cumsum(ret_forecast)
+        cum_ret_lower    = np.cumsum(ret_ci[:, 0])
+        cum_ret_upper    = np.cumsum(ret_ci[:, 1])
 
-        # Forecast
-        forecast_obj = result.get_forecast(steps=forecast_steps)
-        forecast = forecast_obj.predicted_mean
-        conf_int = forecast_obj.conf_int()
+        forecast = np.exp(last_log + cum_ret_forecast)
+        lower    = np.exp(last_log + cum_ret_lower)
+        upper    = np.exp(last_log + cum_ret_upper)
 
-        lower = conf_int.iloc[:, 0]
-        upper = conf_int.iloc[:, 1]
-
-        # Residual diagnostics
-        residuals = result.resid
-        residual_mean = np.mean(residuals)
-
-        lb_test = acorr_ljungbox(residuals, lags=[10], return_df=True)
-        lb_pvalue = lb_test["lb_pvalue"].values[0]
+        residuals     = result.resid
+        residual_mean = float(np.mean(residuals))
+        max_lag       = max(1, min(10, len(residuals) // 3))
+        lb_test       = acorr_ljungbox(residuals, lags=[max_lag], return_df=True)
+        lb_pvalue     = float(lb_test["lb_pvalue"].values[0])
 
     except Exception as e:
         print("SARIMA ERROR:", e)
+        last_price = float(series_arr[-1])
+        avg_return = float(np.mean(np.diff(series_arr)))
+        forecast   = np.array([last_price + avg_return * (i + 1) for i in range(forecast_steps)])
+        std_val    = float(np.std(series_arr))
+        lower      = forecast - 1.96 * std_val
+        upper      = forecast + 1.96 * std_val
 
-        # Fallback safe outputs
-        forecast = np.zeros(forecast_steps)
-        lower = np.zeros(forecast_steps)
-        upper = np.zeros(forecast_steps)
-
-    # -------------------------
-    # Round outputs safely
-    # -------------------------
-    forecast = np.round(forecast, 2)
-    lower = np.round(lower, 2)
-    upper = np.round(upper, 2)
-
-    try:
-        aic = round(float(aic), 2)
-    except:
-        aic = 0.0
-
-    try:
-        residual_mean = round(float(residual_mean), 2)
-    except:
-        residual_mean = 0.0
-
-    try:
-        lb_pvalue = round(float(lb_pvalue), 2)
-    except:
-        lb_pvalue = 0.0
-
-    return forecast, lower, upper, aic, residual_mean, lb_pvalue
+    return (
+        np.round(forecast, 2).tolist(),
+        np.round(lower,    2).tolist(),
+        np.round(upper,    2).tolist(),
+        round(float(aic),           2),
+        round(float(residual_mean), 4),
+        round(float(lb_pvalue),     4),
+    )
