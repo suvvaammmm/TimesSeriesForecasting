@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: timesseriesforecasting
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --timeout 120 --workers 1 --bind 0.0.0.0:$PORT
+    envVars:
+      - key: API_KEY
+        sync: false
+      - key: CLIENT_ID
+        sync: false
+      - key: PASSWORD
+        sync: false
+      - key: TOTP_SECRET
+        sync: false

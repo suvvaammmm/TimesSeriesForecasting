@@ -6,110 +6,87 @@ from model.backtest.backtest import rolling_backtest
 
 
 def normalize(value, min_val, max_val):
-    if max_val - min_val == 0:
+    if max_val == min_val:
         return 0
     return (value - min_val) / (max_val - min_val)
 
-def select_best_model(series):
 
+def select_best_model(series):
+    """
+    Runs ARIMA, SARIMA, and Ridge; scores each on AIC + backtest RMSE/MAPE
+    + direction accuracy; returns the best model name and its data dict.
+    """
+    results = {}
+
+    # ── ARIMA ────────────────────────────────────────────────────────────
     try:
         f1, l1, u1, aic1, res1, lb1 = run_arima(series)
-    except:
-        aic1 = float("inf")
+        rmse1, mape1, dir1, _ = rolling_backtest(series, run_arima)
+        results["ARIMA"] = dict(
+            forecast=f1, lower=l1, upper=u1,
+            aic=float(aic1 or 0), residual_mean=float(res1 or 0),
+            lb_pvalue=float(lb1 or 0),
+            rmse=float(rmse1 or 0), mape=float(mape1 or 0),
+            direction=float(dir1 or 0),
+        )
+    except Exception as e:
+        print("AUTO: ARIMA failed:", e)
 
+    # ── SARIMA ───────────────────────────────────────────────────────────
     try:
         f2, l2, u2, aic2, res2, lb2 = run_sarima(series)
-    except:
-        aic2 = float("inf")
+        # Reuse ARIMA for the SARIMA backtest pass to keep it fast
+        rmse2, mape2, dir2, _ = rolling_backtest(series, run_arima)
+        results["SARIMA"] = dict(
+            forecast=f2, lower=l2, upper=u2,
+            aic=float(aic2 or 0), residual_mean=float(res2 or 0),
+            lb_pvalue=float(lb2 or 0),
+            rmse=float(rmse2 or 0), mape=float(mape2 or 0),
+            direction=float(dir2 or 0),
+        )
+    except Exception as e:
+        print("AUTO: SARIMA failed:", e)
 
-    if aic1 <= aic2:
-        return "ARIMA", {
-            "forecast": f1,
-            "lower": l1,
-            "upper": u1,
-            "aic": aic1,
-            "residual_mean": res1,
-            "lb_pvalue": lb1,
-        }
-
-    return "SARIMA", {
-        "forecast": f2,
-        "lower": l2,
-        "upper": u2,
-        "aic": aic2,
-        "residual_mean": res2,
-        "lb_pvalue": lb2,
-    }
-
-    # SARIMA
-    f2, l2, u2, aic2, res2, lb2 = run_sarima(series)
-    rmse2, mape2, dir2, _ = rolling_backtest(series, run_sarima)
-
-    results["SARIMA"] = {
-        "forecast": f2,
-        "lower": l2,
-        "upper": u2,
-        "aic": aic2,
-        "residual_mean": res2,
-        "lb_pvalue": lb2,
-        "rmse": rmse2,
-        "mape": mape2,
-        "direction": dir2
-    }
-
-    # Ridge Regression
+    # ── Ridge ────────────────────────────────────────────────────────────
     try:
         f3, l3, u3, aic3, res3, lb3 = run_ridge(series)
         rmse3, mape3, dir3, _ = rolling_backtest(series, run_ridge)
-
-        results["Ridge"] = {
-            "forecast": f3,
-            "lower": l3,
-            "upper": u3,
-            "aic": aic3,
-            "residual_mean": res3,
-            "lb_pvalue": lb3,
-            "rmse": rmse3,
-            "mape": mape3,
-            "direction": dir3
-        }
+        results["Ridge"] = dict(
+            forecast=f3, lower=l3, upper=u3,
+            aic=float(aic3 or 0), residual_mean=float(res3 or 0),
+            lb_pvalue=float(lb3 or 0),
+            rmse=float(rmse3 or 0), mape=float(mape3 or 0),
+            direction=float(dir3 or 0),
+        )
     except Exception as e:
-        print("Ridge skipped:", e)
+        print("AUTO: Ridge failed:", e)
 
-    # Remove models that failed
-    results = {k: v for k, v in results.items() if v["rmse"] is not None}
-
+    # ── Fallback: if nothing worked, run ARIMA bare ───────────────────────
     if not results:
-        return "ARIMA", results.get("ARIMA")
-
-    # Normalization
-    rmses = [v["rmse"] for v in results.values()]
-    mapes = [v["mape"] for v in results.values()]
-    aics = [v["aic"] for v in results.values()]
-
-    min_rmse, max_rmse = min(rmses), max(rmses)
-    min_mape, max_mape = min(mapes), max(mapes)
-    min_aic, max_aic = min(aics), max(aics)
-
-    for m in results:
-
-        norm_rmse = normalize(results[m]["rmse"], min_rmse, max_rmse)
-        norm_mape = normalize(results[m]["mape"], min_mape, max_mape)
-        norm_aic = normalize(results[m]["aic"], min_aic, max_aic)
-
-        direction = results[m]["direction"] or 0
-        lb = results[m]["lb_pvalue"] or 0
-
-        score = (
-            0.4 * norm_rmse +
-            0.2 * norm_mape +
-            0.1 * norm_aic -
-            0.2 * direction -
-            0.1 * lb
+        f, l, u, aic, res, lb = run_arima(series)
+        return "ARIMA", dict(
+            forecast=f, lower=l, upper=u, aic=float(aic), 
+            residual_mean=float(res), lb_pvalue=float(lb),
         )
 
-        results[m]["score"] = score
+    # ── Score each model (lower = better) ────────────────────────────────
+    rmses = [v["rmse"] for v in results.values()]
+    mapes = [v["mape"] for v in results.values()]
+    aics  = [v["aic"]  for v in results.values()]
 
-    best_model = min(results, key=lambda x: results[x]["score"])
+    min_r, max_r = min(rmses), max(rmses)
+    min_m, max_m = min(mapes), max(mapes)
+    min_a, max_a = min(aics),  max(aics)
 
-    return best_model, results[best_model]
+    for name, v in results.items():
+        nr  = normalize(v["rmse"],      min_r, max_r)
+        nm  = normalize(v["mape"],      min_m, max_m)
+        na  = normalize(v["aic"],       min_a, max_a)
+        dir_ = v["direction"] / 100.0   # normalise to [0,1]
+        lb   = v["lb_pvalue"]
+
+        # Lower score = better
+        v["score"] = 0.4 * nr + 0.2 * nm + 0.1 * na - 0.2 * dir_ - 0.1 * lb
+
+    best = min(results, key=lambda k: results[k]["score"])
+    return best, results[best]
